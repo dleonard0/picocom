@@ -136,7 +136,6 @@ tn2217_check_options_changed(struct term_s *t)
     /* Detect the first time that the COM-PORT option becomes acceptable
      * at both remote and local. */
     if (!s->can_comport &&
-         s->opt[TELOPT_COMPORT].us == YES &&
          s->opt[TELOPT_COMPORT].him == YES)
     {
         s->can_comport = 1;
@@ -365,8 +364,7 @@ static int
 tn2217_local_should(struct term_s *t, unsigned char opt)
 {
     return opt == TELOPT_BINARY ||
-           opt == TELOPT_SGA ||
-           opt == TELOPT_COMPORT;
+           opt == TELOPT_SGA;
 }
 
 /* Opens a TCP socket to a host. Returns -1 on failure.  */
@@ -820,7 +818,6 @@ tn2217_init(struct term_s *t)
     tn2217_do(t, TELOPT_BINARY);
     tn2217_will(t, TELOPT_SGA);
     tn2217_do(t, TELOPT_SGA);
-    tn2217_will(t, TELOPT_COMPORT);
     tn2217_do(t, TELOPT_COMPORT);
 
     return 0;
