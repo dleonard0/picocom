@@ -118,6 +118,7 @@ static int tn2217_write(struct term_s *t, const void *buf, unsigned bufsz);
 static void tn2217_recv_comport_cmd(struct term_s *t, unsigned char cmd,
     unsigned char *data, unsigned int datalen);
 static void tn2217_comport_start(struct term_s *t);
+static int tn2217_read(struct term_s *t, void *buf, unsigned bufsz);
 
 /* Access the private state structure of the terminal */
 static struct tn2217_state *
@@ -830,6 +831,35 @@ tn2217_init(struct term_s *t)
     tn2217_will(t, TELOPT_SGA);
     tn2217_do(t, TELOPT_SGA);
     tn2217_do(t, TELOPT_COMPORT);
+
+    /* Wait until we have established RFC2217 and BINARY support.
+     * This is so that we avoid the problem of transceiving data before
+     * UART control.
+     * We can ignore the SGA option, which is an optimisation. */
+    set_nonblocking(t->fd, 0);
+    while (s->opt[TELOPT_COMPORT].him == WANTYES ||
+           s->opt[TELOPT_BINARY].him == WANTYES)
+    {
+        char ch;
+        int n;
+
+        n = tn2217_read(t, &ch, sizeof ch);
+        if (n == 1) {
+            /* We received some data before options were negotiated.
+             * Send it to stdout in case it is important. */
+            (void) write(STDOUT_FILENO, &ch, sizeof ch);
+            continue;
+        }
+        if (n == -1 && errno == EAGAIN)
+            continue;
+        break;
+    }
+    set_nonblocking(t->fd, 1);
+
+    if (!s->can_comport) {
+        fprintf(stderr, "[remote does not support COM-PORT]\r\n");
+        return -1;
+    }
 
     return 0;
 }
