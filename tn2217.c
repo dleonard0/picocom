@@ -367,6 +367,21 @@ tn2217_local_should(struct term_s *t, unsigned char opt)
            opt == TELOPT_SGA;
 }
 
+static int
+set_nonblocking(int fd, int enable)
+{
+    int fl;
+
+    fl = fcntl(fd, F_GETFL);
+    if (fl == -1)
+        return -1;
+    if (enable)
+        fl |= O_NONBLOCK;
+    else
+        fl &= ~O_NONBLOCK;
+    return fcntl(fd, F_SETFL, fl);
+}
+
 /* Opens a TCP socket to a host. Returns -1 on failure.  */
 int
 tn2217_open(const char *port)
@@ -379,7 +394,6 @@ tn2217_open(const char *port)
     int error;
     char *sep = NULL;
     int fd = -1;
-    long fl;
 
     /* Allow a port number to be specified with a comma */
     node = strdup(port);
@@ -415,11 +429,8 @@ tn2217_open(const char *port)
     freeaddrinfo(ais);
 
     if ( fd != -1 ) {
-        /* Enable nonblocking mode */
-                /* Not all systems can pass SOCK_NONBLOCK to socket() */
-        fl = fcntl(fd, F_GETFL);
-        fl |= O_NONBLOCK;
-        fcntl(fd, F_SETFL, fl);
+        /* Not all systems can pass SOCK_NONBLOCK to socket() */
+        set_nonblocking(fd, 1);
     }
 
 out:
