@@ -101,14 +101,6 @@ struct tn2217_state {
     unsigned char cmdbuf[32];   /* IAC command accumulator */
     unsigned char cmdbuflen;
     unsigned int cmdiac : 1;    /* 1 iff last cmdbuf ch is incomplete IAC */
-
-    /* When COM-PORT option is fully negotiated, can_comport
-     * is set to true. This also means that any deferred termios/modem
-     * settings will be triggered. */
-    unsigned int can_comport : 1,  /* WILL COMPORT was received */
-                 set_termios : 1,  /* tcsetattr called before can_comport */
-                 set_modem : 1;    /* modem_bis/c called before can_comport */
-
 };
 
 
@@ -128,22 +120,6 @@ tn2217_state(struct term_s *t)
 }
 #define STATE(t) tn2217_state(t)
 
-/* Called when a TELNET option changes */
-static void
-tn2217_check_options_changed(struct term_s *t)
-{
-    struct tn2217_state *s = STATE(t);
-
-    /* Detect the first time that the COM-PORT option becomes acceptable
-     * at both remote and local. */
-    if (!s->can_comport &&
-         s->opt[TELOPT_COMPORT].him == YES)
-    {
-        s->can_comport = 1;
-        tn2217_comport_start(t);
-    }
-}
-
 /* Starts protocol to enable/disable a peer option (sends DO/DONT). */
 static int
 tn2217_remote_opt(struct term_s *t, unsigned char opt, int want)
@@ -162,7 +138,6 @@ tn2217_remote_opt(struct term_s *t, unsigned char opt, int want)
     } else if (q->him == WANTYES) {
         q->himq = want ? EMPTY : OPPOSITE;
     }
-    tn2217_check_options_changed(t);
     return 0;
 }
 
@@ -184,7 +159,6 @@ tn2217_local_opt(struct term_s *t, unsigned char opt, int want)
     } else if (q->us == WANTYES) {
         q->usq = want ? EMPTY : OPPOSITE;
     }
-    tn2217_check_options_changed(t);
     return 0;
 }
 
@@ -287,7 +261,6 @@ tn2217_recv_opt(struct term_s *t, unsigned char op, unsigned char opt)
         unsigned char msg[3] = { IAC, respond, opt };
         writen_ni(t->fd, msg, sizeof msg);
     }
-    tn2217_check_options_changed(t);
 }
 
 /* Receive and process a single byte of an IAC command.
@@ -614,14 +587,12 @@ tn2217_send_set_rts(struct term_s *t, int modem)
 }
 
 
-/* Called when the COM-PORT option frist becomes available.
+/* Called when the COM-PORT option first becomes available.
  * Sends initial COM-PORT setup, and requests the remote send its
  * COM-PORT state. */
 static void
 tn2217_comport_start(struct term_s *t)
 {
-    struct tn2217_state *s = STATE(t);
-
     /* Request the remote's server identifier. (Optional) */
     tn2217_send_comport_cmd(t, COMPORT_SIGNATURE, "", 0);
 
@@ -629,36 +600,23 @@ tn2217_comport_start(struct term_s *t)
     tn2217_send_comport_cmd1(t, COMPORT_SET_LINESTATE_MASK, 0);
     tn2217_send_comport_cmd1(t, COMPORT_SET_MODEMSTATE_MASK, MODEMSTATE_MASK);
 
-    if (s->set_termios) {
-        tn2217_send_set_baudrate(t, tios_get_baudrate(&s->termios, NULL));
-        tn2217_send_set_datasize(t, tios_get_databits(&s->termios));
-        tn2217_send_set_parity(t, tios_get_parity(&s->termios));
-        tn2217_send_set_stopsize(t, tios_get_stopbits(&s->termios));
-        tn2217_send_set_fc(t, tios_get_flowcntrl(&s->termios));
-    } else {
-        /* If we're not going to specify it, ask for
-         * the current com port geometry. */
-        tn2217_send_comport_cmd4(t, COMPORT_SET_BAUDRATE,
-                                    COMPORT_BAUDRATE_REQUEST);
-        tn2217_send_comport_cmd1(t, COMPORT_SET_DATASIZE,
-                                    COMPORT_DATASIZE_REQUEST);
-        tn2217_send_comport_cmd1(t, COMPORT_SET_PARITY,
-                                    COMPORT_PARITY_REQUEST);
-        tn2217_send_comport_cmd1(t, COMPORT_SET_STOPSIZE,
-                                    COMPORT_STOPSIZE_REQUEST);
-        tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
-                                    COMPORT_CONTROL_FC_REQUEST);
-    }
+    /* Ask remote for its current geometry. */
+    tn2217_send_comport_cmd4(t, COMPORT_SET_BAUDRATE,
+                                COMPORT_BAUDRATE_REQUEST);
+    tn2217_send_comport_cmd1(t, COMPORT_SET_DATASIZE,
+                                COMPORT_DATASIZE_REQUEST);
+    tn2217_send_comport_cmd1(t, COMPORT_SET_PARITY,
+                                COMPORT_PARITY_REQUEST);
+    tn2217_send_comport_cmd1(t, COMPORT_SET_STOPSIZE,
+                                COMPORT_STOPSIZE_REQUEST);
+    tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
+                                COMPORT_CONTROL_FC_REQUEST);
 
-    if (s->set_modem) {
-        tn2217_send_set_dtr(t, s->modem);
-        tn2217_send_set_rts(t, s->modem);
-    } else {
-        tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
-                                    COMPORT_CONTROL_DTR_REQUEST);
-        tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
-                                    COMPORT_CONTROL_RTS_REQUEST);
-    }
+    /* Ask for control line status */
+    tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
+                                COMPORT_CONTROL_DTR_REQUEST);
+    tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
+                                COMPORT_CONTROL_RTS_REQUEST);
 
     /* Also ask for the current break state */
     tn2217_send_comport_cmd1(t, COMPORT_SET_CONTROL,
@@ -802,7 +760,6 @@ tn2217_recv_comport_cmd(struct term_s *t, unsigned char cmd,
     }
 }
 
-
 static int
 tn2217_init(struct term_s *t)
 {
@@ -844,6 +801,7 @@ tn2217_init(struct term_s *t)
         int n;
 
         n = tn2217_read(t, &ch, sizeof ch);
+        DEBUG("[n=%d ch=%02x errno=%d]\r\n", n, ch, errno);
         if (n == 1) {
             /* We received some data before options were negotiated.
              * Send it to stdout in case it is important. */
@@ -856,11 +814,12 @@ tn2217_init(struct term_s *t)
     }
     set_nonblocking(t->fd, 1);
 
-    if (!s->can_comport) {
+    if (s->opt[TELOPT_COMPORT].him != YES) {
         fprintf(stderr, "[remote does not support COM-PORT]\r\n");
         return -1;
     }
 
+    tn2217_comport_start(t);
     return 0;
 }
 
@@ -887,14 +846,11 @@ tn2217_tcsetattr(struct term_s *t, int when, const struct termios *tio)
 
     DEBUG("[tcsetattr %s]\r\n", termios_repr(tio));
     s->termios = *tio;
-    if (s->can_comport) {
-        tn2217_send_set_baudrate(t, tios_get_baudrate(tio, NULL));
-        tn2217_send_set_datasize(t, tios_get_databits(tio));
-        tn2217_send_set_parity(t, tios_get_parity(tio));
-        tn2217_send_set_stopsize(t, tios_get_stopbits(tio));
-        tn2217_send_set_fc(t, tios_get_flowcntrl(tio));
-    } else
-        s->set_termios = 1;
+    tn2217_send_set_baudrate(t, tios_get_baudrate(tio, NULL));
+    tn2217_send_set_datasize(t, tios_get_databits(tio));
+    tn2217_send_set_parity(t, tios_get_parity(tio));
+    tn2217_send_set_stopsize(t, tios_get_stopbits(tio));
+    tn2217_send_set_fc(t, tios_get_flowcntrl(tio));
     return 0;
 }
 
@@ -917,13 +873,10 @@ tn2217_modem_bis(struct term_s *t, const int *modem)
 
     s->modem |= *modem;
 
-    if (s->can_comport) {
-        if (*modem & TIOCM_DTR)
-            tn2217_send_set_dtr(t, TIOCM_DTR);
-        if (*modem & TIOCM_RTS)
-            tn2217_send_set_rts(t, TIOCM_RTS);
-    } else if (*modem & (TIOCM_DTR|TIOCM_RTS))
-        s->set_modem = 1;
+    if (*modem & TIOCM_DTR)
+        tn2217_send_set_dtr(t, TIOCM_DTR);
+    if (*modem & TIOCM_RTS)
+        tn2217_send_set_rts(t, TIOCM_RTS);
 
     return 0;
 }
@@ -937,13 +890,10 @@ tn2217_modem_bic(struct term_s *t, const int *modem)
 
     s->modem &= ~*modem;
 
-    if (s->can_comport) {
-        if (*modem & TIOCM_DTR)
-            tn2217_send_set_dtr(t, 0);
-        if (*modem & TIOCM_RTS)
-            tn2217_send_set_rts(t, 0);
-    } else if (*modem & (TIOCM_DTR|TIOCM_RTS))
-        s->set_modem = 1;
+    if (*modem & TIOCM_DTR)
+        tn2217_send_set_dtr(t, 0);
+    if (*modem & TIOCM_RTS)
+        tn2217_send_set_rts(t, 0);
 
     return 0;
 }
