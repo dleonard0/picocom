@@ -1578,7 +1578,7 @@ establish_signal_handlers (void)
 
         sigaction (SIGHUP, &ign_action, NULL);
         sigaction (SIGQUIT, &ign_action, NULL);
-        sigaction (SIGALRM, &ign_action, NULL);
+        sigaction (SIGALRM, &exit_action, NULL);
         sigaction (SIGUSR1, &ign_action, NULL);
         sigaction (SIGUSR2, &ign_action, NULL);
         sigaction (SIGPIPE, &ign_action, NULL);
@@ -2091,9 +2091,11 @@ main (int argc, char *argv[])
 #endif
 
 #ifdef USE_RFC2217
+    alarm(10);
     r = term_add(tty_fd,
                  opts.telnet ? opts.port : NULL,
                  opts.telnet ? &tn2217_ops : NULL);
+    alarm(0);
 #else
     r = term_add(tty_fd, NULL, NULL);
 #endif
